@@ -1,6 +1,12 @@
 # RAG
 Build a RAG from start - from a virgin MacOS install so we cover ALL dependancies 
 
+RAG Chatbot — Local Buildout Plan & Lesson Guide (16GB Teaching Edition)
+Machine target: Apple Silicon Mac with 16GB+ RAM (Mac Mini M-series, MacBook Air M-series, or similar) | macOS 14+
+User: any user with admin (sudo) rights — does not need to be root
+Date: 2026-05-05
+Version: 2.0 — 2026-05-05
+Goal: Build a locally-hosted RAG chatbot that can ingest PDF, Word, Markdown, and text files — including understanding graphs and charts — and answer questions through a browser-based chat interface, on consumer-class Apple Silicon hardware (16GB RAM minimum)
 
 ## How to Read This Document
 
@@ -39,9 +45,9 @@ Your Documents (PDF, DOCX, MD, TXT)
 [ Gradio ] ← the browser chat window you type into
 ```
 
-**2-model design (preserved from v1.4 → v2.0):** `gemma4:e4b` is Google's "effective 4 billion parameter" multimodal model — it natively understands both text and images. This means it handles image description during ingest AND generates chat answers from a single loaded model, eliminating the need for a separate vision model entirely. `nomic-embed-text` remains the dedicated embedding model — purpose-built for semantic search and far more accurate for RAG retrieval than a general LLM. Stated capabilities of Gemma 4 e4b: vision, tools, thinking, audio, and cloud-deployable.
+**2-model design :** `gemma4:e4b` is Google's "effective 4 billion parameter" multimodal model — it natively understands both text and images. This means it handles image description during ingest AND generates chat answers from a single loaded model, eliminating the need for a separate vision model entirely. `nomic-embed-text` remains the dedicated embedding model — purpose-built for semantic search and far more accurate for RAG retrieval than a general LLM. Stated capabilities of Gemma 4 e4b: vision, tools, thinking, audio, and cloud-deployable.
 
-**Vision quality disclosure:** The diagram and chart description quality of `gemma4:e4b` is meaningfully lower than the `gemma4:26b` model used in v1 of this project. For a teaching PoC and most text-heavy field-service Q&A, this trade-off is acceptable. If your end use case depends on rich diagram/chart understanding (e.g. parts-explosion drawings, schematic reading), consider the v1 architecture or run ingest *once* on a 64GB machine using `gemma4:26b` and ship the resulting `chroma_db/` to a v2 deployment.
+**Vision quality disclosure:** The diagram and chart description quality of `gemma4:e4b` is meaningfully lower than the `gemma4:26b` model used in v1 of this project. For a teaching PoC and most text-heavy field-service Q&A, this trade-off is acceptable. If your end use case depends on rich diagram/chart understanding (e.g. parts-explosion drawings, schematic reading).
 
 **The key concept — RAG (Retrieval-Augmented Generation):**  
 Instead of asking the LLM a question cold (where it might guess or hallucinate), we first *retrieve* the most relevant passages from your documents, then *augment* the prompt with that context, then *generate* a grounded answer. The LLM only speaks from evidence it was handed.
