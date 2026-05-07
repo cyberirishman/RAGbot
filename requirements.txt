@@ -1,0 +1,57 @@
+#requirements.txt is a text file PIP uses to install python apckages & Libraries
+#pip (a Python package manager will install exactly these required dependancies
+# by reading this file rather than you doing it manually
+# === Document Parsing ===
+docling==2.14.0                # IBM's enterprise document parser
+
+# === Vector Database ===
+chromadb==0.5.20               # Local vector store
+
+# === RAG Orchestration ===
+langchain==0.3.18              # Core RAG framework
+langchain-community==0.3.17    # Community connectors
+langchain-chroma==0.2.0        # Official ChromaDB connector
+langchain-ollama==0.2.2        # Official Ollama connector
+
+# === Ollama Python Client ===
+# Two Ollama clients are listed deliberately:
+#   langchain-ollama → used for chat + embeddings (clean LangChain integration)
+#   ollama (direct)  → used in describe_image() because LangChain's wrapper
+#                      does not yet expose the multimodal `images` field cleanly.
+ollama==0.4.7                  # Direct client (used for vision model image calls)
+
+# === Chat UI ===
+# v1.5.1 (2026-05-03): bumped from gradio==5.13.0 to gradio==5.50.0.
+# gradio_client==1.6.0 (the bundled version with gradio 5.13.0) had a JSON
+# schema parser bug that crashed at startup with
+#   TypeError: argument of type 'bool' is not iterable
+# whenever Pydantic 2.13.3 emitted `additionalProperties: True` schemas.
+# Fixed in gradio_client>=1.7.0; we pin both versions explicitly so this
+# can't bite us again from an unpinned transitive dependency.
+gradio==5.50.0                 # Browser-based chat interface
+gradio_client==1.14.0          # Bundled with gradio>=5.16; pinned defensively (v1.5.1)
+
+# === Image Handling ===
+Pillow==11.1.0                 # PIL — image conversion for vision model
+
+# === Utilities ===
+python-dotenv==1.0.1
+tqdm==4.67.1
+
+# === Defensive Transitive Pins (v1.6 hardening) ===
+# These three packages are pulled in transitively by other libraries (LangChain
+# pulls pydantic; ChromaDB and others pull numpy). They are pinned explicitly
+# here because version drift in any of them has historically caused breaking
+# changes that look mysterious from a user's perspective:
+#   - pydantic 2.13+ emitted JSON schemas that older gradio_client couldn't
+#     parse, crashing the Gradio UI on first request (fixed in v1.5.1).
+#   - NumPy 2.x is a major version with breaking API changes that affect
+#     ChromaDB, LangChain, scikit-image, and transformers.
+# Pinning these keeps a fresh install reproducible even if LangChain or another
+# upstream library bumps its dependency requirements in the future.
+pydantic==2.12.3               # Schema validation core for LangChain
+pydantic_core==2.41.4          # Compiled core for pydantic; tightly coupled
+numpy==1.26.4                  # NumPy 1.x — must NOT be 2.x (breaking changes)
+
+# === Logging (used by logging_setup.py) ===
+# stdlib — no install needed; logging and logging.handlers are built into Python
