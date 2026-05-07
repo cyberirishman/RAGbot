@@ -61,5 +61,4 @@ Instead of asking the LLM a question cold (where it might guess or hallucinate),
 | System + ChromaDB + Python overhead | — | ~3–4 GB |
 | **Total** | | **~14–16 GB of 16 GB** |
 
-Tight but workable on a 16GB machine, comfortable on 24GB+. Two practical recommendations on 16GB: close other RAM-hungry apps (browsers with many tabs, IDEs) before running ingest, and consider lowering `OLLAMA_KEEP_ALIVE` from `24h` to `5m` if you do other work between chatbot sessions — the model will reload more slowly afterwards but RAM is reclaimed when idle. **For comparison**, v1's `gemma4:26b` configuration uses ~17 GB for the chat/vision model alone — about double — which is why v1 targets 32GB+ machines.
-
+Tight but workable on a 16GB machine, comfortable on 24GB+. Two practical recommendations on 16GB: close other RAM-hungry apps (browsers with many tabs, IDEs) before running ingest, and consider lowering `OLLAMA_KEEP_ALIVE` from `24h` to `5m` if you do other work between chatbot sessions — the model will reload more slowly afterwards but RAM is reclaimed when idle.
