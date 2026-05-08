@@ -1,5 +1,5 @@
 
-Project File System Map
+## Project File System Map
 
 ...
 Chatbotv2/
@@ -18,3 +18,4 @@ Chatbotv2/
 ├── config.py                    ← ALL settings live here — the only file admins need to edit
 └── requirements.txt             ← Full dependency list — every package pinned to a known-good version
 ...
+
