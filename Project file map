@@ -1,4 +1,7 @@
-Project File Map
+
+Project File System Map
+
+...
 Chatbotv2/
 ├── chatbot-16G-venv/            ← Python virtual environment (never edit manually)
 ├── ingest/                      ← DROP DOCUMENTS HERE to add to the knowledge base
@@ -14,3 +17,4 @@ Chatbotv2/
 │   └── logging_setup.py         ← Shared logging config (used by all scripts)
 ├── config.py                    ← ALL settings live here — the only file admins need to edit
 └── requirements.txt             ← Full dependency list — every package pinned to a known-good version
+...
