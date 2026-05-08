@@ -19,3 +19,23 @@ Chatbotv2/
 └── requirements.txt             ← Full dependency list — every package pinned to a known-good version
 ```
 
+
+```
+Your Documents (PDF, DOCX, MD, TXT)
+        ↓
+[ Docling ] ← extracts text, tables, and images
+        ↓
+[ gemma4:e4b ] ← reads charts/graphs, writes plain-English descriptions
+        |          (multimodal — handles images AND text natively)
+        ↓
+[ nomic-embed-text ] ← converts all text into numbers (embeddings)
+        ↓
+[ ChromaDB ] ← stores and searches those numbers (vector database)
+        ↓
+[ LangChain ] ← when you ask a question, finds the right chunks and asks the LLM
+        ↓
+[ gemma4:e4b via Ollama ] ← reads the retrieved context, writes the answer
+        ↓
+[ Gradio ] ← the browser chat window you type into
+```
+
