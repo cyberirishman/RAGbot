@@ -128,4 +128,4 @@ QUERY PIPELINE
   │                      │     in the chat bubble
   └──────────────────────┘
 
-~~~
+```
