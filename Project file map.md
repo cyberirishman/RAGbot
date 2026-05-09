@@ -19,23 +19,113 @@ Chatbotv2/
 └── requirements.txt             ← Full dependency list — every package pinned to a known-good version
 ```
 
+## Ingest pipeline
+```
+INGEST PIPELINE
+              (runs once per document — populates ChromaDB)
+
+  Your Documents
+  (PDF, DOCX,
+   MD, TXT)
+        │
+        ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │  Docling                                                │
+  │  parses each file → markdown text + tables + image list │
+  └─────────────────────────────────────────────────────────┘
+        │
+        │ (text path)                       (image path)
+        ▼                                          ▼
+  ┌──────────────────────┐         ┌────────────────────────────┐
+  │ Two-stage chunker    │         │ gemma4:e4b (vision)        │
+  │  1. split on H1/H2/  │         │ "describe this picture"    │
+  │     H3 markdown      │         │ (multimodal — same model   │
+  │     headings         │         │  used for chat answers)    │
+  │  2. split each       │         └────────────────────────────┘
+  │     section into     │                       │
+  │     1800-char        │                       │ (description text
+  │     overlapping      │                       │  becomes its own chunk)
+  │     pieces           │                       │
+  └──────────────────────┘                       │
+        │                                        │
+        ├────────────────────────────────────────┘
+        ▼
+  ┌────────────────────────────────────────────────┐
+  │ nomic-embed-text  (embedder)                   │
+  │ each chunk → 768-dimensional vector            │
+  │ (a numeric "fingerprint" of its meaning)       │
+  └────────────────────────────────────────────────┘
+        │
+        ▼
+  ┌────────────────────────────────────────────────┐
+  │ ChromaDB  (vector database — on disk)          │
+  │ stores vectors + chunk text + metadata         │
+  │ collection name: "enterprise_kb"               │
+  └────────────────────────────────────────────────┘
+        │
+        ▼
+  Source file moved to ingest/processed/
+  (so re-running ingest.py never duplicates chunks)
+```
+
+
+## Query Pipleine
 
 ```
-Your Documents (PDF, DOCX, MD, TXT)
-        ↓
-[ Docling ] ← extracts text, tables, and images
-        ↓
-[ gemma4:e4b ] ← reads charts/graphs, writes plain-English descriptions
-        |          (multimodal — handles images AND text natively)
-        ↓
-[ nomic-embed-text ] ← converts all text into numbers (embeddings)
-        ↓
-[ ChromaDB ] ← stores and searches those numbers (vector database)
-        ↓
-[ LangChain ] ← when you ask a question, finds the right chunks and asks the LLM
-        ↓
-[ gemma4:e4b via Ollama ] ← reads the retrieved context, writes the answer
-        ↓
-[ Gradio ] ← the browser chat window you type into
-```
+QUERY PIPELINE
+            (runs once per user message — answers from ChromaDB)
 
+  ┌──────────────────────┐
+  │  Gradio (browser)    │  ← user types:
+  │  http://localhost:   │     "what is the torque spec for the input shaft?"
+  │   7860               │
+  └──────────────────────┘
+        │
+        ▼
+  ┌────────────────────────────────────────────────┐
+  │ src/app.py — chat_handler (Gradio generator)   │
+  │ receives message + per-tab history             │
+  └────────────────────────────────────────────────┘
+        │
+        ▼
+  ┌────────────────────────────────────────────────┐
+  │ src/chat.py — LCEL chain (LangChain)           │
+  │ orchestrates: embed → retrieve → prompt → LLM  │
+  └────────────────────────────────────────────────┘
+        │
+        ▼
+  ┌────────────────────────────────────────────────┐
+  │ nomic-embed-text  (embedder)                   │
+  │ user's question → 768-dim vector               │
+  └────────────────────────────────────────────────┘
+        │
+        ▼
+  ┌────────────────────────────────────────────────┐
+  │ ChromaDB similarity search                     │
+  │ returns top-K (5) most relevant chunks         │
+  │ from the knowledge base built by ingest        │
+  └────────────────────────────────────────────────┘
+        │
+        ▼
+  ┌────────────────────────────────────────────────┐
+  │ Prompt assembly (LCEL)                         │
+  │  • system instructions ("answer from context") │
+  │  • last HISTORY_TURNS messages (conversation)  │
+  │  • retrieved chunks (the grounded context)     │
+  │  • the user's current question                 │
+  └────────────────────────────────────────────────┘
+        │
+        ▼
+  ┌────────────────────────────────────────────────┐
+  │ gemma4:e4b  (chat)                             │
+  │ reads the assembled prompt,                    │
+  │ streams answer tokens back                     │
+  └────────────────────────────────────────────────┘
+        │
+        ▼ (tokens stream back through LangChain → Gradio)
+  ┌──────────────────────┐
+  │  Gradio (browser)    │  ← answer appears word-by-word
+  │                      │     in the chat bubble
+  └──────────────────────┘
+
+~~~
