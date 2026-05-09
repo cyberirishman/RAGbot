@@ -19,6 +19,28 @@ Chatbotv2/
 └── requirements.txt             ← Full dependency list — every package pinned to a known-good version
 ```
 
+## Shared Infrastructure
+```
+SHARED INFRASTRUCTURE
+                  (used by both pipelines above)
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │  Ollama  (http://0.0.0.0:11434)                                 │
+  │  one local HTTP service that loads and serves both AI models:   │
+  │   • nomic-embed-text  ← embeddings  (text → vector)             │
+  │   • gemma4:e4b        ← chat answers  AND  image description    │
+  │  models stay in RAM for OLLAMA_KEEP_ALIVE (default "24h")       │
+  └─────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │  ChromaDB  (folder: chroma_db/, embedded mode — no separate     │
+  │  server process). Built once by ingest.py, queried every time   │
+  │  the user asks a question. Persisted to disk between sessions   │
+  │  so the knowledge base survives reboots.                        │
+  └─────────────────────────────────────────────────────────────────┘
+```
+
+
 ## Ingest pipeline
 ```
 INGEST PIPELINE
