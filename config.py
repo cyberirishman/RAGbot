@@ -65,6 +65,21 @@ CHUNK_OVERLAP  = 200    # Overlap raised proportionally from 150 (U-17).
 RETRIEVAL_TOP_K = 5     # How many chunks to retrieve per query
                         # Higher = more context for the LLM, but slower and may dilute relevance
 
+# --- Conversation Memory Settings ---
+# How many of the most recent messages from the chat history are injected
+# into the prompt so the LLM can resolve follow-up questions and pronouns
+# (e.g. "how many are black?" right after "tell me about the inventory").
+# 6 = roughly the last 3 exchanges (user + assistant pairs).
+#
+# Privacy: this history exists only inside the user's browser tab.
+# The server (Python process, Ollama, ChromaDB) never persists it between
+# sessions — closing the tab discards the conversation entirely.
+#
+# Referenced by src/chat.py format_history() — without this constant,
+# follow-up queries crash with AttributeError. Was missing from the
+# canonical heredoc through v2.4 (back-ported in v2.5 — see U-30).
+HISTORY_TURNS = 6
+
 # --- Vision Model Context Window ---
 # How many characters of surrounding document text to send to the vision model
 # alongside an image, to help it interpret the picture in context.
