@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Word Vector Space Visualization</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        header {
+            text-align: center;
+            padding: 20px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 2.2em;
+            background: linear-gradient(90deg, #ff6b6b, #4ecdc4);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .subtitle {
+            margin-top: 10px;
+            font-size: 1.2em;
+            opacity: 0.8;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 95%;
+            max-width: 1200px;
+            margin: 20px auto;
+        }
+
+        .viz-container {
+            width: 100%;
+            height: 60vh;
+            min-height: 400px;
+            position: relative;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+
+        #vector-viz {
+            width: 100%;
+            height: 100%;
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 20px;
+            width: 100%;
+        }
+
+        .control-card {
+            flex: 1;
+            min-width: 200px;
+            max-width: 300px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 15px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .control-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+            color: #4ecdc4;
+        }
+
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-right: 15px;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .axis-label {
+            position: absolute;
+            font-weight: bold;
+            font-size: 14px;
+            white-space: nowrap;
+            color: rgba(255, 255, 255, 0.8);
+            text-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+        }
+
+        .instructions {
+            margin-top: 20px;
+            color: rgba(255, 255, 255, 0.7);
+            text-align: center;
+            font-size: 0.9em;
+        }
+
+        .explanation {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+            line-height: 1.6;
+        }
+
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 1.8em;
+            }
+            
+            .subtitle {
+                font-size: 1em;
+            }
+            
+            .control-card {
+                min-width: 100%;
+            }
+            
+            .viz-container {
+                height: 50vh;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Word Vector Space Visualization</h1>
+        <div class="subtitle">Exploring semantic dimensions: Gender, Powerfulness, Humanness</div>
+    </header>
+
+    <div class="container">
+        <div class="viz-container">
+            <div id="vector-viz"></div>
+        </div>
+
+        <div class="controls">
+            <div class="control-card">
+                <div class="control-title">Words in Vector Space</div>
+                <div class="legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #ff6b6b;"></div>
+                        <div>King</div>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #f9844a;"></div>
+                        <div>Queen</div>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #4ecdc4;"></div>
+                        <div>Slave Girl</div>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #a3a3ff;"></div>
+                        <div>Beetle</div>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #ffd166;"></div>
+                        <div>Lioness</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="control-card">
+                <div class="control-title">Dimensions</div>
+                <div>X-axis: Gender (Masculine ↔ Feminine)</div>
+                <div>Y-axis: Powerfulness (Low ↔ High)</div>
+                <div>Z-axis: Humanness (Animal ↔ Human)</div>
+            </div>
+        </div>
+
+        <div class="instructions">
+            Click and drag to rotate the visualization. Scroll to zoom in/out.
+        </div>
+
+        <div class="explanation">
+            <p>This 3D visualization demonstrates how words can be represented in a semantic vector space. Each word is positioned according to its relative values on three dimensions:</p>
+            <p><strong>Gender:</strong> Where the word falls on a spectrum from masculine to feminine.</p>
+            <p><strong>Powerfulness:</strong> How much power or authority the word connotes.</p>
+            <p><strong>Humanness:</strong> Whether the word refers to humans or non-human entities.</p>
+            <p>The spatial relationships between words reveal semantic similarities and differences, showing how meaning can be encoded geometrically.</p>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // Vector space data for each word
+            // Format: [Gender (m->f), Powerfulness (low->high), Humanness (animal->human)]
+            // Scale from -1 to 1 for each dimension
+            const wordsData = {
+                'King': [-0.8, 0.9, 1.0, '#ff6b6b'],
+                'Duke': [-0.8, 0.6, 1.0, '#ff6b1b'],
+                'Queen': [0.8, 0.8, 1.0, '#f9844a'],
+                'Monarch': [0.0, 0.85, 1.0, '#f9844a'],
+                'Slave Girl': [0.9, -0.8, 1.0, '#4ecdc4'],
+                'Beetle': [0, -0.5, -0.9, '#a3a3ff'],
+                'Lioness': [0.7, 0.8, -0.7, '#ffd166'],
+                'Lion': [-0.7, 0.8, -0.7, '#ffd188'],
+                'Building': [0.0, 0.4, -1, '#afc216']
+            };
+
+            // Setup scene
+            const container = document.getElementById('vector-viz');
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.1, 1000);
+            camera.position.set(3, 3, 3);
+
+            const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setClearColor(0x000000, 0);
+            container.appendChild(renderer.domElement);
+
+            // Add lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(1, 1, 1);
+            scene.add(directionalLight);
+
+            // Add controls
+            const controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            // Create coordinate axes
+            // const axesHelper = new THREE.AxesHelper(2.5);
+            // scene.add(axesHelper);
+
+            // Custom materials for axes
+            /*
+            const xAxisMaterial = new THREE.LineBasicMaterial({ color: 0xff0000 });
+            const yAxisMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00 });
+            const zAxisMaterial = new THREE.LineBasicMaterial({ color: 0x0000ff });
+
+            // Replace axes with custom ones
+            const xAxis = new THREE.Line(
+                new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(0, 0, 0),
+                    new THREE.Vector3(2.5, 0, 0)
+                ]),
+                xAxisMaterial
+            );
+            
+            const yAxis = new THREE.Line(
+                new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(0, 0, 0),
+                    new THREE.Vector3(0, 2.5, 0)
+                ]),
+                yAxisMaterial
+            );
+            
+            const zAxis = new THREE.Line(
+                new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(0, 0, 0),
+                    new THREE.Vector3(0, 0, 2.5)
+                ]),
+                zAxisMaterial
+            );
+
+            scene.add(xAxis);
+            scene.add(yAxis);
+            scene.add(zAxis);
+            */
+            // Add axis labels
+            // New function to create thick axis lines
+function createThickAxis(start, end, color) {
+    const path = new THREE.LineCurve3(start, end);
+    const geometry = new THREE.TubeGeometry(path, 10, 0.05, 8, false); // TubeGeometry for thickness
+    const material = new THREE.MeshBasicMaterial({ color });
+    return new THREE.Mesh(geometry, material);
+}
+
+// Create new thick axis lines
+const thickXAxis = createThickAxis(new THREE.Vector3(-2.5, 0, 0), new THREE.Vector3(2.5, 0, 0), 0xff0000);
+const thickYAxis = createThickAxis(new THREE.Vector3(0, -2.5, 0), new THREE.Vector3(0, 2.5, 0), 0x00ff00);
+const thickZAxis = createThickAxis(new THREE.Vector3(0, 0, -2.5), new THREE.Vector3(0, 0, 2.5), 0x0000ff);
+
+// Add thick axis lines to the scene
+scene.add(thickXAxis, thickYAxis, thickZAxis);
+            const addAxisLabel = (text, position, color) => {
+                const canvas = document.createElement('canvas');
+                canvas.width = 256;
+                canvas.height = 128;
+                const context = canvas.getContext('2d');
+                
+                context.fillStyle = color;
+                context.font = 'Bold 40px Arial';
+                context.fillText(text, 10, 64);
+                
+                const texture = new THREE.CanvasTexture(canvas);
+                const material = new THREE.SpriteMaterial({ map: texture });
+                const sprite = new THREE.Sprite(material);
+                
+                sprite.scale.set(1, 0.5, 1);
+                sprite.position.copy(position);
+                
+                scene.add(sprite);
+                return sprite;
+            };
+
+            // Add axis labels
+            const xLabel = addAxisLabel('Gender', new THREE.Vector3(2.7, 0, 0), '#ff5555');
+            const yLabel = addAxisLabel('Powerfulness', new THREE.Vector3(0, 2.7, 0), '#55ff55');
+            const zLabel = addAxisLabel('Humanness', new THREE.Vector3(0, 0, 2.7), '#5555ff');
+
+            // Add coordinate planes (grids)
+            const gridXZ = new THREE.GridHelper(5, 10, 0x888888, 0x444444);
+            scene.add(gridXZ);
+
+            const gridXY = new THREE.GridHelper(5, 10, 0x888888, 0x444444);
+            gridXY.rotation.x = Math.PI / 2;
+            scene.add(gridXY);
+
+            const gridYZ = new THREE.GridHelper(5, 10, 0x888888, 0x444444);
+            gridYZ.rotation.z = Math.PI / 2;
+            scene.add(gridYZ);
+
+            // Create spheres for each word
+            Object.entries(wordsData).forEach(([word, data]) => {
+                const [x, y, z, color] = data;
+                
+                // Scale to visualization space
+                const scaledX = x * 2;
+                const scaledY = y * 2;
+                const scaledZ = z * 2;
+                
+                // Create the sphere
+                const geometry = new THREE.SphereGeometry(0.15, 32, 32);
+                const material = new THREE.MeshPhongMaterial({
+                    color: color,
+                    emissive: color,
+                    emissiveIntensity: 0.3,
+                    specular: 0xffffff,
+                    shininess: 100
+                });
+                
+                const sphere = new THREE.Mesh(geometry, material);
+                sphere.position.set(scaledX, scaledY, scaledZ);
+                scene.add(sphere);
+                
+                // Add text label
+                const canvas = document.createElement('canvas');
+                canvas.width = 256;
+                canvas.height = 128;
+                const context = canvas.getContext('2d');
+                
+                context.fillStyle = '#ffffff';
+                context.font = 'Bold 28px Arial';
+                context.fillText(word, 10, 64);
+                
+                const texture = new THREE.CanvasTexture(canvas);
+                const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+                const sprite = new THREE.Sprite(spriteMaterial);
+                
+                sprite.scale.set(1, 0.5, 1);
+                sprite.position.set(scaledX, scaledY + 0.3, scaledZ);
+                
+                scene.add(sprite);
+            });
+
+            // Handle window resize
+            window.addEventListener('resize', () => {
+                camera.aspect = container.clientWidth / container.clientHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(container.clientWidth, container.clientHeight);
+            });
+
+            // Animation loop
+            function animate() {
+                requestAnimationFrame(animate);
+                controls.update();
+                renderer.render(scene, camera);
+            }
+
+            animate();
+
+            // Add subtle rotation for initial load
+            let initialRotation = { value: 0 };
+            const initialTween = gsap.to(initialRotation, {
+                value: 1,
+                duration: 5,
+                onUpdate: () => {
+                    scene.rotation.y = initialRotation.value * Math.PI * 0.5;
+                }
+            });
+
+            // Simulate the gsap library if not available
+            if (typeof gsap === 'undefined') {
+                let startTime = Date.now();
+                function animateRotation() {
+                    const elapsedTime = (Date.now() - startTime) / 1000;
+                    if (elapsedTime < 5) {
+                        scene.rotation.y = (elapsedTime / 5) * Math.PI * 0.5;
+                        requestAnimationFrame(animateRotation);
+                    }
+                }
+                animateRotation();
+            }
+        });
+    </script>
+</body>
+</html>
