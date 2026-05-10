@@ -424,7 +424,7 @@ mkdir RAGbot
 > **What it does:** Changes your terminal's current working directory to Users/YOUR USERNAME folder. THen we create a new folder called RAGbot where all project files will live All commands from here on run relative to this location unless stated otherwise.  
 > **`cd` stands for:** "change directory" — the most fundamental terminal navigation command.
 
-> **`cd ` `** changes directory to the users home directory  — We can also type cd /Users/YOUR_USERNAME
+> **`cd ~ `** changes directory to the users home directory  — We can also type `cd /Users/YOUR_USERNAME`
 **Step 4.2 — Create all project subdirectories and the package marker file**
 
 ```bash
