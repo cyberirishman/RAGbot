@@ -4,8 +4,7 @@ Build a RAG from start - from a virgin MacOS install so we cover ALL dependancie
 RAG Chatbot — Local Buildout Plan & Lesson Guide (16GB Teaching Edition)
 Machine target: Apple Silicon Mac with 16GB+ RAM (Mac Mini M-series, MacBook Air M-series, or similar) | macOS 14+
 User: any user with admin (sudo) rights — does not need to be root
-Date: 2026-05-05
-Version: 2.0 — 2026-05-05
+
 Goal: Build a locally-hosted RAG chatbot that can ingest PDF, Word, Markdown, and text files — including understanding graphs and charts — and answer questions through a browser-based chat interface, on consumer-class Apple Silicon hardware (16GB RAM minimum)
 
 ## How to Read This Document
