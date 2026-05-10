@@ -1,4 +1,4 @@
-# RAG Chatbot (RAGbot)— Local Buildout Plan & Lesson Guide (16GB Teaching Edition)
+ # RAG Chatbot (RAGbot)— Local Buildout Plan & Lesson Guide (16GB Teaching Edition)
 
 **Machine target:** Apple Silicon Mac with **16GB+ RAM** (Mac Mini M-series, MacBook Air M-series, or similar) | macOS 14+  
 **User:** any user with admin (sudo) rights — does not need to be root  
@@ -154,7 +154,9 @@ The chatbot has two distinct pipelines that share two pieces of infrastructure. 
 ```
 
 **2 AI models design  - run by ollama
-** `gemma4:e4b` is Google's "effective 4 billion parameter" multimodal model — it natively understands both text and images. This means it handles image description during ingest AND generates chat answers from a single loaded model, eliminating the need for a separate vision model entirely. 
+
+** `gemma4:e4b` is Google's "effective 4 billion parameter" multimodal model — it natively understands both text and images. This means it handles image description during ingest AND generates chat answers from a single loaded model, eliminating the need for a separate vision model entirely.
+
 ** `nomic-embed-text` remains the dedicated embedding model — purpose-built for semantic search and far more accurate for RAG retrieval than a general LLM. Stated capabilities of Gemma 4 e4b: vision, tools, thinking, audio, and cloud-deployable.
 
 **Vision quality disclosure:** The diagram and chart description quality of `gemma4:e4b` is meaningfully lower than the `gemma4:26b` model used in v1 of this project. For a teaching PoC and most text-heavy field-service Q&A, this trade-off is acceptable. If your end use case depends on rich diagram/chart understanding (e.g. parts-explosion drawings, schematic reading), consider the v1 architecture or run ingest *once* on a 64GB machine using `gemma4:26b` and ship the resulting `chroma_db/` to a v2 deployment.
