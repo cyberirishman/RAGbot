@@ -153,7 +153,7 @@ The chatbot has two distinct pipelines that share two pieces of infrastructure. 
   └─────────────────────────────────────────────────────────────────┘
 ```
 
-** 2 AI models design  - both running on ollama **
+**2 AI models design  - both running on ollama**
 
 ** `gemma4:e4b` is Google's "effective 4 billion parameter" multimodal model — it natively understands both text and images. This means it handles image description during ingest AND generates chat answers from a single loaded model, eliminating the need for a separate vision model entirely.
 
