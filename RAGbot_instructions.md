@@ -426,13 +426,15 @@ ls -la
 > **`cd` stands for:** "change directory" — the most fundamental terminal navigation command.
 
 > **`cd ~ `** changes directory to the users home directory  — We can also type `cd /Users/YOUR_USERNAME`.
+> 
 > **`ls -la`** lists the files and folders in your current directory
 >
 > ```bash
 > cd RAGbot
 > ```
 >
-> **`cd RAGbot`**  moves to our project directory **RAGbot**
+> **`cd RAGbot`**  moves to our project directory **RAGbot** 
+> 
 **Step 4.2 — Create all project subdirectories and the package marker file**
 
 ```bash
