@@ -1,13 +1,28 @@
 # RAG
-Build a RAG from start - from a virgin MacOS install so we cover ALL dependancies 
-
+Build a RAG from start - from a virgin MacOS silicon install so we cover ALL dependancies
 RAG Chatbot — Local Buildout Plan & Lesson Guide (16GB Teaching Edition)
 Machine target: Apple Silicon Mac with 16GB+ RAM (Mac Mini M-series, MacBook Air M-series, or similar) | macOS 14+
 User: any user with admin (sudo) rights — does not need to be root
 
-Goal: Build a locally-hosted RAG chatbot that can ingest PDF, Word, Markdown, and text files — including understanding graphs and charts — and answer questions through a browser-based chat interface, on consumer-class Apple Silicon hardware (16GB RAM minimum)
 
-## How to Read This Document
+This project is designed to be *idiotproof* as much as I am capable of
+The project assumes NO dependancies are already installed on your Mac silicon amchine
+We go step by step installing everything and explaining why
+Brew, Git , Python , a venv virtual environment , all dependancies using pip to install a requirements.txt , Ollama , the required models...everything! 
+
+
+
+Goal: Build a locally-hosted RAG chatbot that can ingest PDF, Word, Markdown, and text files 
+— including understanding graphs and charts 
+— and answer questions through a browser-based chat interface,
+on consumer-class Apple Silicon hardware (16GB RAM minimum)
+
+## The only document you absolutely need to download is the RAGbot_instructions.md file.
+## ALL step by instructions and line of code is inside this single document 
+## The completed phython / config files are also in this repo but for best learning experience
+## GO LINE BY LINE from the RAGbot.md file
+
+## How to Read The RAGbot_instructions.md Document
 
 Every step follows this format:
 
