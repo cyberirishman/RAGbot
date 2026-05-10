@@ -415,14 +415,15 @@ python3.12 -m pip --version
 
 Before writing any code, we create the folder skeleton the entire project will live in. Having an organised structure from the start means the IT admin maintaining this later will always know where to find things.
 
-**Step 4.1 — Navigate to the project folder**
+**Step 4.1 — Navigate to your home folder ( by typing cd ~ )and create a new folder called RAGbot**
 
 ```bash
-cd /Users/andrew-m4/Documents/Claude/Projects/Chatbot
+cd ~
+mkdir RAGbot
 ```
-> **What it does:** Changes your terminal's current working directory to the Chatbot project folder. All commands from here on run relative to this location unless stated otherwise.  
+> **What it does:** Changes your terminal's current working directory to Users/YOUR USERNAME folder. THen we create a new folder called RAGbot where all project files will live All commands from here on run relative to this location unless stated otherwise.  
 > **`cd` stands for:** "change directory" — the most fundamental terminal navigation command.
-
+> **cd `** changes directory to the users home directory  — We can also type cd /Users/YOUR_USERNAME
 **Step 4.2 — Create all project subdirectories and the package marker file**
 
 ```bash
