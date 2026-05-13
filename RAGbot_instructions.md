@@ -1978,13 +1978,8 @@ def check_knowledge_base() -> int:
 PYEOF
 ```
 > **What it does:** Creates `src/chat.py` — the RAG query engine that is called every time a user sends a message.  
-> **Key changes from v1.0/v1.2:**
-> - **`keep_alive`** — added to both `OllamaEmbeddings` and `ChatOllama`. Previously, the embedding and chat models could be unloaded between queries, causing a slow reload on each user message.
-> - **Logging** — initialised via `setup_logging`. All function calls and query details are now written to `logs/chatbot.log` alongside terminal output.
-> - **`temperature=0.1`** — unchanged and important. This setting keeps the LLM factual and grounded. For a technical knowledge base you do not want creativity.
-> - **New in v1.3 — LCEL chain (U-07):** `RetrievalQA.from_chain_type` replaced with an LCEL pipeline using the `|` pipe operator. LCEL is the current LangChain standard, removes deprecation warnings, and is required for streaming support.
-> - **New in v1.3 — `query_stream()` (U-05):** Generator function that yields partial answers token-by-token using `qa_chain.stream()`. Used by `app.py`'s chat handler so responses appear progressively. Also the key prerequisite for any future voice-output (TTS) feature.
-> - **New in v1.5 — Conversation memory:** `RAG_PROMPT_TEMPLATE` gains a `{history}` block; new `format_history()` helper trims to `HISTORY_TURNS` and converts Gradio's messages-format list into a plain-text conversation block; `qa_chain` gains a `"history"` branch; `query()` and `query_stream()` both accept an optional `history` argument. `query_stream()` logs the formatted history block at DEBUG level so we can verify in `logs/chatbot.log` that prior turns actually reached the LLM during follow-up-question testing. Memory lives only in the user's browser tab — the server never remembers it between sessions.
+
+
 
 ---
 
