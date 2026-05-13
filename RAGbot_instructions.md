@@ -1519,15 +1519,6 @@ PYEOF
 > - **Post-ingest image assertion** — prints a warning if zero image-description chunks were created, making the "vision pipeline is broken" case visible immediately.
 > - **Two-stage chunking:** Documents are first split on markdown section headings (`MarkdownHeaderTextSplitter`), then each section is cut into 1800-character chunks (`RecursiveCharacterTextSplitter`). The heading path (h1/h2/h3) travels as metadata on every chunk, so a query like "torque spec for input shaft" can match the right section even if the heading itself isn't in the chunk body. Chunk size raised from 1000 → 1800 to keep multi-step procedures and spec tables intact.
 >
-> **Why the heredoc above looks the way it does — Known Issues already baked into the canonical source:**
->
-> The heredoc above is the post-fix canonical state. The two notes below explain the underlying behaviour so a student or future maintainer who wonders "why this line and not the obvious one?" can understand the rationale without having to re-discover it. These are not pending fixes — they are already applied in the heredoc itself.
->
-> **Note 1 — why `importlib.metadata.version("docling")` and not `docling.__version__` (resolved in plan v2.4, 2026-05-07).**  
-> `docling` 2.14.0 does not expose a `__version__` attribute on its top-level module — unlike `langchain`, `chromadb`, and `gradio`, which do. An earlier draft of this script tried `docling.__version__` and crashed on every run with `AttributeError: module 'docling' has no attribute '__version__'`. The heredoc now uses `importlib.metadata.version("docling")` (a Python standard library call that reads the installed package metadata and works for any installed package regardless of whether it exposes `__version__`) and the bare `import docling` was removed because nothing else in the file needed it. The submodule imports (`from docling.document_converter import …`, etc.) are absolute imports — Python initialises the `docling` package automatically when any submodule of it is imported, so removing the bare top-level import does not affect the rest of the script. **First verified working on Andrew's 16GB dry-run machine on 2026-05-07.**
->
-> **Note 2 — why `keep_alive` is NOT passed to `OllamaEmbeddings` (resolved in plan v1.5.1).**  
-> `langchain-ollama` 0.2.2's `OllamaEmbeddings` class uses `extra_forbidden` Pydantic validation, meaning it raises a `ValidationError` if any parameter not in its schema is passed. `keep_alive` is not in its schema. The parameter is therefore omitted from the `OllamaEmbeddings` constructor only — it is still correctly passed to `ollama_client.chat()` (vision model calls in this script) and to `ChatOllama` in Phase 9. During an active ingest run, the embedding model is called back-to-back for every chunk so Ollama will not unload it due to inactivity.
 
 ---
 
@@ -1549,8 +1540,8 @@ ls ingest/
 
 ```bash
 # Make sure you are in the PROJECT ROOT before running — not inside src/
-# Your prompt should show: (chatbot-16G-venv) .../Chatbotv2 %
-# If it shows .../Chatbotv2/src, run: cd ..
+# Your prompt should show: (chatbot-16G-venv) .../RAGbot %
+# If it shows .../RAGbot/src, run: cd ..
 
 python src/ingest.py
 ```
