@@ -982,121 +982,424 @@ The ingestion script is the "loader" — it reads documents from the `ingest/` f
 **Step 8.1 — Create src/ingest.py**
 
 ```bash
-cat > src/ingest.py << 'PYEOF'
+cat > src/chat.py << 'PYEOF'
 """
-ingest.py — Document Ingestion Pipeline
-========================================
-Run this script whenever you add new documents to the ingest/ folder.
-It will process every supported file, extract text and images,
-describe any images using the vision model, and store everything in ChromaDB.
+chat.py — RAG Query Engine
+============================
+This module handles the retrieval-augmented generation (RAG) pipeline.
+It is imported by app.py (the Gradio UI) and handles:
+  1. Embedding the user's question using nomic-embed-text
+  2. Searching ChromaDB for the most relevant document chunks
+  3. Building a context-rich prompt using LCEL (LangChain Expression Language)
+  4. Calling gemma4:e4b via Ollama to generate a grounded answer
+  5. Returning the answer and the sources it used — streaming token-by-token
+     (via query_stream) or all-at-once (via query)
 
-After successful ingestion, each processed file is moved to ingest/processed/
-so it cannot be accidentally re-ingested.
-
-Usage (from project root, with venv activated):
-    python src/ingest.py
+v1.3 changes:
+  - Replaced deprecated RetrievalQA.from_chain_type with an LCEL chain (U-07).
+    LCEL (LangChain Expression Language) uses the | pipe operator to compose
+    steps — much like Unix pipes. It is the modern LangChain approach and
+    supports streaming natively.
+  - Added query_stream() generator for token-by-token streaming output (U-05).
+    app.py uses this so answers appear word-by-word rather than all at once
+    after a 20-60 second wait.
 """
 
 import os
 import sys
-import base64
-import hashlib      # For generating deterministic chunk IDs (prevents duplicates)
-import platform     # For the startup version banner
-import subprocess   # For querying Ollama's version
-import importlib.metadata  # For reading installed package versions reliably.
-                            # We use this for Docling because the docling package
-                            # does NOT expose a top-level `__version__` attribute
-                            # (unlike LangChain, ChromaDB, Gradio, etc.).
-                            # `importlib.metadata.version("docling")` reads the
-                            # version from pip's installed-package metadata, which
-                            # works for ANY installed package regardless of whether
-                            # it exposes `__version__` on its module object.
-from pathlib import Path
-from io import BytesIO
+from operator import itemgetter
 
-# tqdm gives us a progress bar so we can see how far through a large batch we are
-from tqdm import tqdm
-
-# Pillow (PIL) handles image loading and format conversion
-from PIL import Image
-
-# Ollama Python client — used directly here for vision model calls (image input)
-import ollama as ollama_client
-
-# Docling document converter with explicit pipeline options
-# We must use PdfPipelineOptions and set generate_picture_images=True
-# or Docling will silently skip all image extraction from PDFs
-#
-# Note: there is intentionally NO bare `import docling` here. An earlier
-# version of this script had `import docling` followed by `docling.__version__`
-# in the startup banner — but Docling 2.14.0 does not expose `__version__` on
-# its top-level module, so that line raised AttributeError on every run.
-# The version is now read via `importlib.metadata.version("docling")` (see the
-# `import importlib.metadata` line in the stdlib block above), which works
-# regardless of whether the package exposes `__version__`. The submodule
-# imports below are absolute imports — they do not require a bare `import
-# docling`, because Python initialises the `docling` package automatically
-# whenever any submodule of it is imported.
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
-
-# PictureItem is the correct Docling class for image elements
-# The old doc.body.children approach did not match Docling's actual API
-from docling_core.types.doc import PictureItem
-
-# LangChain packages
-import langchain
-import chromadb as chromadb_pkg
-
-# LangChain text splitters — two-stage chunking pipeline (U-16):
-#   Stage 1: MarkdownHeaderTextSplitter splits on headings first, preserving
-#            section context (h1/h2/h3) as metadata on every resulting chunk.
-#   Stage 2: RecursiveCharacterTextSplitter then cuts each header section down
-#            to character-bounded chunks that fit the embedding model's window.
-# Docling exports all documents as markdown, so heading-aware splitting applies
-# even to PDFs and DOCX files — section names travel with every chunk.
-from langchain.text_splitter import (
-    MarkdownHeaderTextSplitter,
-    RecursiveCharacterTextSplitter,
-)
-
-# ChromaDB via LangChain — stores and retrieves our embeddings
+# LangChain components for the LCEL RAG chain (U-07)
 from langchain_chroma import Chroma
+from langchain_ollama import OllamaEmbeddings, ChatOllama
+from langchain.prompts import PromptTemplate
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
 
-# Ollama embeddings via LangChain — calls nomic-embed-text to vectorise text
-from langchain_ollama import OllamaEmbeddings
-
-# Import all settings from our central config file
+# Import all settings from central config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 
-# Import our shared logging setup — replaces print() throughout this script
+# Shared logging setup — writes to both terminal and logs/chatbot.log
 from src.logging_setup import setup_logging
 log = setup_logging(__name__)
 
 
 # =============================================================================
-# STARTUP: Log the software environment for forensics / reproducibility
+# STEP 1: Initialise connections (done once when the module is imported)
 # =============================================================================
-# When something breaks months from now, this banner tells you which exact
-# versions of Python, LangChain, ChromaDB, Docling, and Ollama were running.
-# Without this, debugging is guesswork.
+
+# Embedding function — same model used during ingestion.
+# Using the same model for both ingestion and querying is critical:
+# the search only works if the question vector "lives in the same space"
+# as the document vectors. Switching models would make all stored embeddings useless.
+#
+# IMPORTANT — Phase 8 Known Fix backported here in v1.5.1 (2026-05-03):
+# We do NOT pass `keep_alive` to OllamaEmbeddings. langchain-ollama 0.2.2
+# uses Pydantic with `extra_forbidden`, so any field outside its schema
+# (including `keep_alive`) raises:
+#   pydantic_core._pydantic_core.ValidationError: 1 validation error for OllamaEmbeddings
+#   keep_alive  Extra inputs are not permitted [type=extra_forbidden]
+# That crash happens at module import time, so it blocks every importer of
+# src.chat — including src/app.py — and the whole UI fails to start.
+# `keep_alive` IS supported by ChatOllama and the direct ollama client, so
+# we keep it on the chat LLM below. Same fix is applied in src/ingest.py.
+embedding_function = OllamaEmbeddings(
+    model=config.EMBED_MODEL,
+    base_url=config.OLLAMA_BASE_URL,
+)
+
+# Connect to the existing ChromaDB collection (read-only from chat's perspective)
+vector_store = Chroma(
+    collection_name=config.CHROMA_COLLECTION,
+    embedding_function=embedding_function,
+    persist_directory=config.CHROMA_DIR
+)
+
+# Create a retriever — this is the component that searches ChromaDB.
+# k=RETRIEVAL_TOP_K means "return the top K most similar chunks to the query"
+retriever = vector_store.as_retriever(
+    search_type="similarity",
+    search_kwargs={"k": config.RETRIEVAL_TOP_K}
+)
+
+# Create the LLM connection — this is the model that writes the final answer.
+# keep_alive keeps the chat model resident between user questions.
+llm = ChatOllama(
+    model=config.CHAT_MODEL,
+    base_url=config.OLLAMA_BASE_URL,
+    temperature=0.1,    # Low temperature = more factual, less creative.
+                        # 0.0 = fully deterministic, 1.0 = very creative/random.
+                        # For a technical knowledge base, 0.1 keeps answers grounded.
+    keep_alive=config.OLLAMA_KEEP_ALIVE,
+)
+
+log.info("chat.py initialised — retriever ready (top_k=%d)", config.RETRIEVAL_TOP_K)
+
+
+# =============================================================================
+# STEP 2: Define the prompt template
+# =============================================================================
+
+# This is the exact instruction we give the LLM every time it answers a question.
+# {context} is replaced with the retrieved document chunks.
+# {question} is replaced with the user's actual question.
+# Explicit instructions to say "I don't know" prevent hallucination.
+
+RAG_PROMPT_TEMPLATE = """You are an expert technical assistant for an enterprise field service company.
+You answer questions based ONLY on the information provided in the context below.
+If the answer is not contained in the context, say clearly: "I don't have information about that in the current knowledge base."
+Do not guess, invent, or use knowledge outside the provided context.
+If the context includes descriptions of charts or diagrams, use that visual information in your answer.
+If the conversation history below contains relevant prior exchanges, use them to understand follow-up questions and pronouns.
+
+Conversation history (most recent last):
+{history}
+
+Context from knowledge base:
+{context}
+
+Question: {question}
+
+Answer (based only on the context above):"""
+
+prompt = PromptTemplate(
+    template=RAG_PROMPT_TEMPLATE,
+    input_variables=["history", "context", "question"]
+)
+
+
+# =============================================================================
+# STEP 3: Build the LCEL RAG chain (U-07 — replaces deprecated RetrievalQA)
+# =============================================================================
+#
+# LCEL uses the | (pipe) operator to chain steps left-to-right, just like
+# Unix pipes. Each step receives the output of the previous step.
+#
+# Reading this chain left-to-right:
+#   1. The input dict {"query": question} arrives.
+#   2. itemgetter("query") | retriever pulls the question and searches ChromaDB,
+#      returning a list of matching Document objects.
+#   3. format_docs joins those documents into one context string.
+#   4. itemgetter("query") passes the original question through unchanged.
+#   5. The prompt template fills in {context} and {question}.
+#   6. llm generates the answer token-by-token.
+#   7. StrOutputParser() strips any message wrapper and returns a plain string.
+#
+# Why LCEL over RetrievalQA:
+#   - RetrievalQA.from_chain_type is deprecated in LangChain 0.2+ and will be
+#     removed in a future release. It emits deprecation warnings on every query.
+#   - LCEL chains support .stream() natively — this is required for U-05
+#     (word-by-word streaming in Gradio). RetrievalQA has no .stream() method.
+#   - LCEL is more explicit and easier to debug — every step is visible.
+
+def format_docs(docs):
+    """Concatenate retrieved document chunks into one context string for the prompt.
+    Each chunk is separated by a blank line so the LLM can distinguish sections."""
+    return "\n\n".join(d.page_content for d in docs)
+
+# Build the LCEL chain
+qa_chain = (
+    {
+        # Left branch: take the query, run it through the retriever, format the docs
+        "context":  itemgetter("query") | retriever | format_docs,
+        # Middle branch: pass the query through unchanged as the question
+        "question": itemgetter("query"),
+        # Right branch: pass the pre-formatted history string through unchanged.
+        # format_history() is called in query()/query_stream() in Python land,
+        # so by the time itemgetter("history") fires, this value is already a
+        # ready-to-use plain-text block.
+        "history":  itemgetter("history"),
+    }
+    | prompt            # Fill {history}, {context} and {question} into the prompt template
+    | llm               # Send the completed prompt to gemma4:e4b
+    | StrOutputParser() # Parse the LLM response to a plain string
+)
+
+
+# =============================================================================
+# STEP 3.5: Conversation history formatter (v1.5)
+# =============================================================================
+
+def format_history(history: list) -> str:
+    """
+    Convert Gradio's history list into a plain-text conversation block for the prompt.
+
+    Gradio passes history as a list of dicts:
+        [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
+
+    We trim to the last HISTORY_TURNS messages and format as readable lines like:
+        User: ...
+        Assistant: ...
+        User: ...
+
+    If history is empty or None, returns a placeholder so the {history} prompt
+    variable is never blank — keeps the prompt template clean and signals to
+    the LLM that there is no prior context to consider.
+
+    The empty-assistant placeholder appended by app.py's chat_handler mid-stream
+    is filtered out defensively, even though chat_handler passes history[:-2]
+    which already excludes it.
+
+    Privacy note: this history exists only inside the user's browser tab.
+    The server (Ollama, Python process, ChromaDB) never persists it between
+    sessions — closing the tab discards the conversation entirely.
+    """
+    if not history:
+        return "No prior conversation."
+    # Take only the last HISTORY_TURNS messages to avoid bloating the prompt
+    recent = history[-config.HISTORY_TURNS:]
+    lines = []
+    for msg in recent:
+        role = "User" if msg.get("role") == "user" else "Assistant"
+        content = msg.get("content", "").strip()
+        # Skip the empty assistant placeholder that appears mid-stream
+        if content:
+            lines.append(f"{role}: {content}")
+    return "\n".join(lines) if lines else "No prior conversation."
+
+
+# =============================================================================
+# STEP 4: Public query functions (called by app.py)
+# =============================================================================
+
+def query(question: str, history: list = None) -> dict:
+    """
+    Non-streaming query — runs the full RAG pipeline and returns when complete.
+    Returns a dict with:
+        answer   : the LLM's complete answer (str)
+        sources  : deduplicated list of source document names (list[str])
+        chunks   : the raw retrieved text chunks (list[str])
+
+    Used by: smoke tests, the check_knowledge_base utility, and any caller
+    that needs the complete answer before doing anything with it.
+    For the live chat UI, use query_stream() instead.
+
+    history : optional list of prior Gradio messages-format dicts (v1.5).
+              Defaults to None, which format_history() turns into the
+              "No prior conversation." placeholder. Backward-compatible
+              with all existing callers that don't pass history.
+
+    NOTE — double retrieval: retriever.invoke() runs once here to capture
+    source document names, and again inside qa_chain.invoke() to build context.
+    This is an intentional trade-off for simplicity at PoC scale — two fast
+    local vector searches add negligible time compared to LLM inference.
+    """
+    if not question or not question.strip():
+        return {
+            "answer": "Please enter a question.",
+            "sources": [],
+            "chunks": []
+        }
+
+    log.info("Query received: %s", question[:100])
+
+    # Run retrieval first to capture source document references
+    docs = retriever.invoke(question)
+    sources = sorted({d.metadata.get("source", "Unknown source") for d in docs})
+    chunks  = [d.page_content for d in docs]
+
+    # Run the full LCEL chain — returns a plain string (via StrOutputParser).
+    # history is pre-formatted into a plain-text block before being passed
+    # into the chain (the chain's itemgetter("history") just plucks it out).
+    answer = qa_chain.invoke({
+        "query":   question,
+        "history": format_history(history),
+    })
+
+    log.info("Query answered — sources used: %s", sources)
+
+    return {
+        "answer":  answer,
+        "sources": sources,
+        "chunks":  chunks,
+    }
+
+
+def query_stream(question: str, history: list = None):
+    """
+    Streaming query — yields partial answer dicts as the LLM produces tokens.
+    Used by app.py's chat_handler so words appear in the UI progressively
+    rather than making the user wait for the full response.
+
+    Each yielded dict has the same shape as query()'s return value:
+        answer   : the answer so far (grows with each yield)
+        sources  : source document names (available from the first yield)
+        chunks   : raw retrieved chunks (available from the first yield)
+
+    history : optional list of prior Gradio messages-format dicts (v1.5).
+              Browser-tab-scoped only — the server never remembers it
+              between sessions.
+
+    Why streaming matters for a 25B model on M4:
+        Full-response wait time is 20–60 seconds depending on answer length.
+        Streaming makes the first tokens appear within ~1–2 seconds, which
+        dramatically improves the perceived responsiveness of the chatbot.
+        This is also the prerequisite for any future voice-output feature —
+        TTS can begin reading the first sentence while the rest is still
+        being generated.
+
+    NOTE — double retrieval: same as query() above. Two local vector searches,
+    negligible cost compared to LLM streaming time.
+    """
+    if not question or not question.strip():
+        yield {"answer": "Please enter a question.", "sources": [], "chunks": []}
+        return
+
+    log.info("Stream query received: %s", question[:100])
+
+    # Retrieve source documents up front — we need them for citations
+    # and they're available immediately, before streaming begins.
+    docs    = retriever.invoke(question)
+    sources = sorted({d.metadata.get("source", "Unknown source") for d in docs})
+    chunks  = [d.page_content for d in docs]
+
+    # Format the conversation history once, up front (v1.5).
+    # Logged at DEBUG so we can verify in logs/chatbot.log that history
+    # actually reached the model during follow-up-question testing.
+    formatted_history = format_history(history)
+    log.debug(
+        "History block sent to LLM (%d chars): %s",
+        len(formatted_history),
+        formatted_history[:200].replace("\n", " | ")
+    )
+
+    # Stream tokens from the LCEL chain.
+    # qa_chain.stream() yields one string token at a time.
+    # We accumulate them into `partial` and yield after each token so the
+    # Gradio UI updates the chat bubble in real time.
+    partial = ""
+    for token in qa_chain.stream({
+        "query":   question,
+        "history": formatted_history,
+    }):
+        partial += token
+        yield {
+            "answer":  partial,
+            "sources": sources,
+            "chunks":  chunks,
+        }
+
+    log.info("Stream query complete — sources used: %s", sources)
+
+
+def check_knowledge_base() -> int:
+    """
+    Returns the number of chunks currently stored in ChromaDB.
+    Used by app.py to warn the user if the knowledge base is empty.
+    """
+    try:
+        collection = vector_store._collection
+        count = collection.count()
+        log.info("Knowledge base check: %d chunks in collection '%s'",
+                 count, config.CHROMA_COLLECTION)
+        return count
+    except Exception as e:
+        log.error("Could not query knowledge base: %s", e)
+        return 0
+PYEOF
+
+What it does: Creates src/chat.py — the RAG query engine that is called every time a user sends a message.
+Key changes from v1.0/v1.2:
+
+keep_alive — added to both OllamaEmbeddings and ChatOllama. Previously, the embedding and chat models could be unloaded between queries, causing a slow reload on each user message.
+Logging — initialised via setup_logging. All function calls and query details are now written to logs/chatbot.log alongside terminal output.
+temperature=0.1 — unchanged and important. This setting keeps the LLM factual and grounded. For a technical knowledge base you do not want creativity.
+New in v1.3 — LCEL chain (U-07): RetrievalQA.from_chain_type replaced with an LCEL pipeline using the | pipe operator. LCEL is the current LangChain standard, removes deprecation warnings, and is required for streaming support.
+New in v1.3 — query_stream() (U-05): Generator function that yields partial answers token-by-token using qa_chain.stream(). Used by app.py's chat handler so responses appear progressively. Also the key prerequisite for any future voice-output (TTS) feature.
+New in v1.5 — Conversation memory: RAG_PROMPT_TEMPLATE gains a {history} block; new format_history() helper trims to HISTORY_TURNS and converts Gradio's messages-format list into a plain-text conversation block; qa_chain gains a "history" branch; query() and query_stream() both accept an optional history argument. query_stream() logs the formatted history block at DEBUG level so we can verify in logs/chatbot.log that prior turns actually reached the LLM during follow-up-question testing. Memory lives only in the user's browser tab — the server never remembers it between sessions.
+
+
+
+Phase 10 — Build the Gradio Chat Interface
+Gradio turns our Python functions into a browser-accessible chat interface with no web development required.
+Step 10.1 — Create src/app.py
+bashcat > src/app.py << 'PYEOF'
+"""
+app.py — Gradio Chat Interface
+================================
+Launches the browser-based chat UI for the RAG chatbot.
+This is the file you run to start the chatbot.
+
+Usage (from project root, with venv activated):
+    python src/app.py
+
+Then open your browser to: http://localhost:7860
+"""
+
+import os
+import sys
+import platform
+import subprocess
+import gradio as gr
+
+# Import version modules for the startup banner
+import langchain
+import chromadb as chromadb_pkg
+
+# Import our RAG query engine.
+# query_stream() is the streaming generator used by the live chat handler (U-05).
+# check_knowledge_base() reports how many chunks are in ChromaDB for the status bar.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from src.chat import query_stream, check_knowledge_base
+import config
+
+# Shared logging setup — writes to both terminal and logs/chatbot.log
+from src.logging_setup import setup_logging
+log = setup_logging(__name__)
+
+
+# =============================================================================
+# STARTUP: Log the software environment
+# =============================================================================
 
 def log_versions():
     """Print and log all key software versions at startup."""
     log.info("[ENV] Python    : %s (%s %s)",
              sys.version.split()[0], platform.system(), platform.machine())
-    # LangChain and ChromaDB both expose a top-level `__version__` attribute
-    # on their root module — that is the simplest way to read their versions.
+    log.info("[ENV] Gradio    : %s", gr.__version__)
     log.info("[ENV] LangChain : %s", langchain.__version__)
     log.info("[ENV] ChromaDB  : %s", chromadb_pkg.__version__)
-    # Docling does NOT expose `__version__` on its top-level module
-    # (verified against docling 2.14.0). Reading `docling.__version__`
-    # raises AttributeError. Instead we use the standard-library
-    # `importlib.metadata.version()` which queries pip's installed-package
-    # metadata — that always returns the version of an installed package.
-    log.info("[ENV] Docling   : %s", importlib.metadata.version("docling"))
     try:
         ollama_ver = subprocess.check_output(
             ["ollama", "--version"], text=True
@@ -1109,406 +1412,174 @@ log_versions()
 
 
 # =============================================================================
-# STEP 1: Set up connections to our tools
+# Chat handler — called by Gradio every time the user sends a message (U-05/U-08)
 # =============================================================================
 
-log.info("Connecting to Ollama at %s", config.OLLAMA_BASE_URL)
-log.info("Embedding model : %s", config.EMBED_MODEL)
-log.info("Chat/vision model: %s", config.CHAT_MODEL)
-# VISION_MODEL is an alias for CHAT_MODEL in the 2-model design,
-# so logging CHAT_MODEL once is sufficient.
-log.info("ChromaDB path   : %s", config.CHROMA_DIR)
-log.info("Ingest folder   : %s", config.INGEST_DIR)
-
-# Create the embedding function — this is what converts text into vectors.
-#
-# IMPORTANT — Phase 8 Known Fix (also see same pattern in Phase 9 chat.py):
-# We do NOT pass `keep_alive` to OllamaEmbeddings. langchain-ollama 0.2.2
-# uses Pydantic with `extra_forbidden`, so any field outside its schema
-# (including `keep_alive`) raises:
-#   pydantic_core._pydantic_core.ValidationError: 1 validation error for OllamaEmbeddings
-#   keep_alive  Extra inputs are not permitted [type=extra_forbidden]
-# That crash happens at module import time, so the entire ingest run fails
-# before processing a single document. `keep_alive` IS supported by ChatOllama
-# and the direct `ollama` client (see describe_image() below) — we use it there.
-# In practice, this means the embedding model may be unloaded by Ollama after
-# its idle timeout. For typical PoC ingest sizes (<100 MB) the reload cost is
-# negligible. If it ever becomes an issue, set OLLAMA_KEEP_ALIVE via the
-# environment for the whole Ollama server: `OLLAMA_KEEP_ALIVE=24h ollama serve`.
-embedding_function = OllamaEmbeddings(
-    model=config.EMBED_MODEL,
-    base_url=config.OLLAMA_BASE_URL,
-)
-
-# Connect to (or create) the ChromaDB collection.
-# persist_directory tells ChromaDB to save its data to disk in our chroma_db/ folder.
-# If the collection already exists, we add to it. If not, it is created fresh.
-vector_store = Chroma(
-    collection_name=config.CHROMA_COLLECTION,
-    embedding_function=embedding_function,
-    persist_directory=config.CHROMA_DIR
-)
-
-# --- Stage 1: Header-aware splitter (U-16) ---
-# Splits the document first on markdown headings. Each resulting section carries
-# its heading path (h1/h2/h3) as metadata. This means a chunk from
-# "Section 7.2 — Input Shaft Specifications" will have metadata:
-#   {"h1": "Chapter 7 — Drive Train", "h2": "7.2 Input Shaft Specifications"}
-# That context travels into ChromaDB and makes retrieval far more precise for
-# technical documents with deep section hierarchies.
-# strip_headers=False keeps the heading text inside the chunk content as well,
-# so the LLM also sees the heading when it reads the retrieved chunk.
-header_splitter = MarkdownHeaderTextSplitter(
-    headers_to_split_on=[
-        ("#",   "h1"),
-        ("##",  "h2"),
-        ("###", "h3"),
-    ],
-    strip_headers=False,
-)
-
-# --- Stage 2: Character-bounded splitter (U-16 + U-17) ---
-# After header splitting, each section is cut into fixed-size chunks.
-# CHUNK_SIZE is now 1800 (up from 1000 in v1.2) — large enough to keep
-# multi-step procedures and specification tables intact in a single chunk.
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=config.CHUNK_SIZE,
-    chunk_overlap=config.CHUNK_OVERLAP,
-    # Prefer cutting at paragraph breaks, then sentence ends, then word boundaries
-    separators=["\n\n", "\n", ". ", " ", ""]
-)
-
-# Initialise Docling with explicit PDF pipeline options.
-#
-# WHY we set generate_picture_images=True:
-#   By default, Docling does NOT materialise PIL images for embedded pictures.
-#   Without this flag, every image is silently skipped — the vision pipeline is
-#   a no-op and you have no way of knowing. This was a critical bug in v1.0.
-#
-# images_scale=2.0: Higher resolution = better vision-model input quality.
-#   The vision model can read fine print and chart labels more accurately.
-#
-# do_ocr=True: Enables OCR for scanned PDFs (photographed pages, old manuals).
-#   Without OCR, scanned pages produce empty text chunks. With it, Docling runs
-#   text recognition on each page image before processing.
-pdf_pipeline_options = PdfPipelineOptions()
-pdf_pipeline_options.generate_picture_images = True
-pdf_pipeline_options.images_scale = 2.0
-pdf_pipeline_options.do_ocr = True
-
-converter = DocumentConverter(
-    format_options={
-        InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_pipeline_options)
-    }
-)
-
-
-# =============================================================================
-# STEP 2: Vision model helper — describe an image in plain English
-# =============================================================================
-
-def describe_image(image: Image.Image, context: str = "") -> str:
+def chat_handler(message: str, history: list):
     """
-    Takes a PIL Image object, sends it to the vision model via Ollama,
-    and returns a plain-English description of what the image shows.
+    Streaming chat handler — a Python generator that yields partial responses
+    as the LLM produces tokens. Gradio detects that this function uses 'yield'
+    and automatically switches to streaming mode, updating the chat bubble
+    in real time rather than waiting for the full response.
 
-    image   : a PIL.Image object extracted from the document by Docling
-    context : optional surrounding text from the document — helps the vision
-              model understand what kind of chart or diagram this likely is.
-              Length is controlled by config.VISION_CONTEXT_CHARS.
+    message : the user's current question (str)
+    history : list of previous message dicts in Gradio 5 messages format (U-08):
+              [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
+
+    Yields: (cleared_input_box, updated_history) after each token.
+
+    Why a generator instead of a regular function:
+        With gemma4:e4b on a 16GB Apple Silicon Mac, a complete answer typically
+        takes 2-8 seconds (substantially faster than v1's gemma4:26b at 20-60s,
+        thanks to the smaller active parameter count). A regular function makes
+        the user stare at a spinner for the whole time, even if it is short.
+        A generator streams tokens as they are produced — the first words appear
+        within ~0.5-1 seconds, and the answer builds up progressively.
+        This is also the foundation for any future voice-output feature.
     """
-    # Convert the image to PNG bytes, then encode as base64.
-    # Ollama's vision API expects images as base64-encoded strings.
-    buffer = BytesIO()
-    image.save(buffer, format="PNG")
-    image_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    if not message.strip():
+        yield "", history
+        return
 
-    # Build the prompt — giving the model context improves description quality.
-    prompt = (
-        "You are analysing an image extracted from an enterprise technical document. "
-        "Describe what this image shows in precise detail. "
-        "If it is a chart or graph: state the chart type, what the axes represent, "
-        "the key data values, trends, and any conclusions the chart supports. "
-        "If it is a diagram or schematic: describe the components and their relationships. "
-        "If it is a table: summarise the data it contains. "
-        "Be factual and specific — your description will be stored as searchable text. "
-    )
-    if context:
-        # VISION_CONTEXT_CHARS controls how much surrounding text we send.
-        # Tune this in config.py — more context helps but increases token use.
-        prompt += f"\n\nSurrounding document context: {context[:config.VISION_CONTEXT_CHARS]}"
+    log.info("User message: %s", message[:100])
 
-    try:
-        response = ollama_client.chat(
-            model=config.VISION_MODEL,
-            messages=[{
-                "role": "user",
-                "content": prompt,
-                "images": [image_b64]
-            }],
-            keep_alive=config.OLLAMA_KEEP_ALIVE,
-        )
-        return response["message"]["content"].strip()
-    except Exception as e:
-        # If vision model call fails, log it but don't crash the whole ingestion.
-        # The image will be stored as "[Image: description unavailable]" so the
-        # chunk is preserved and the rest of the document continues processing.
-        log.warning("Vision model failed for image: %s", e)
-        return "[Image: description unavailable]"
-
-
-# =============================================================================
-# STEP 3: Generate a deterministic chunk ID
-# =============================================================================
-
-def make_chunk_id(metadata: dict, text: str) -> str:
-    """
-    Creates a unique, reproducible ID for a chunk based on its source file,
-    position within that file, and text content.
-
-    WHY deterministic IDs matter:
-        ChromaDB's add_texts() by default generates random IDs on every call.
-        This means re-running ingest.py on a file that is already in ChromaDB
-        will DUPLICATE all its chunks — doubling (or tripling, or worse) the
-        number of times each chunk appears. Duplicate chunks silently degrade
-        retrieval quality because the top-K results get dominated by identical
-        entries from the same source.
-
-        By using deterministic IDs, ChromaDB's upsert behaviour kicks in:
-        same ID = overwrite the existing entry rather than create a new one.
-        Re-running ingest.py on an unchanged file is now a safe no-op.
-    """
-    h = hashlib.sha1(
-        f"{metadata['source']}|{metadata['chunk_index']}|{text}".encode("utf-8")
-    ).hexdigest()[:16]
-    return f"{metadata['source']}::{metadata['chunk_index']}::{h}"
-
-
-# =============================================================================
-# STEP 4: Process a single document file
-# =============================================================================
-
-def process_document(file_path: Path) -> list[dict]:
-    """
-    Takes a file path, parses it with Docling, extracts text and images,
-    and returns a list of text chunks with metadata ready to store in ChromaDB.
-
-    Each chunk is a dict with:
-        text     : the text content of the chunk
-        metadata : source file, chunk index, chunk type, etc.
-    """
-    log.info("Parsing: %s", file_path.name)
-    chunks = []
-
-    try:
-        # Docling converts the document into a structured internal format.
-        # It handles PDFs, DOCX, MD, and TXT automatically based on file extension.
-        result = converter.convert(str(file_path))
-        doc = result.document
-
-        # --- Extract main text content ---
-        # export_to_markdown() gives us a clean, structured text representation
-        # including headings, paragraphs, and table contents.
-        full_text = doc.export_to_markdown()
-
-        if full_text.strip():
-            # --- Two-stage chunking (U-16) ---
-            #
-            # Stage 1: Split on markdown headings.
-            # header_splitter returns a list of Document objects, each with
-            # page_content = the text under that heading section, and
-            # metadata = {"h1": "...", "h2": "...", "h3": "..."} for whichever
-            # heading levels were present above that section.
-            header_docs = header_splitter.split_text(full_text)
-
-            # Stage 2: Within each header section, split into character chunks.
-            # We collect all sub-chunks together with their inherited heading metadata.
-            staged_chunks = []
-            for hdoc in header_docs:
-                sub_chunks = text_splitter.split_text(hdoc.page_content)
-                for sc in sub_chunks:
-                    staged_chunks.append({
-                        "text":    sc,
-                        "headers": hdoc.metadata,   # e.g. {"h1": "...", "h2": "..."}
-                    })
-
-            log.info("Text: %d chunks from %d characters (via 2-stage split)",
-                     len(staged_chunks), len(full_text))
-
-            for i, ch in enumerate(staged_chunks):
-                chunks.append({
-                    "text": ch["text"],
-                    "metadata": {
-                        "source":       file_path.name,
-                        "source_path":  str(file_path),
-                        "chunk_index":  i,
-                        "chunk_type":   "text",
-                        "total_chunks": len(staged_chunks),
-                        # Spread heading keys (h1/h2/h3) into metadata.
-                        # These become searchable fields in ChromaDB and help
-                        # the retriever surface the right section for specific queries.
-                        **ch["headers"],
-                    }
-                })
-
-        # --- Extract and describe images ---
-        # CORRECT Docling traversal: doc.iterate_items() yields (element, depth) tuples
-        # for every element in the document tree. We check isinstance(element, PictureItem)
-        # to identify image elements.
-        #
-        # The old pattern (doc.body.children + element.image.pil_image) was incorrect —
-        # it did not match Docling's actual API and silently extracted zero images.
-        image_count = 0
-        for element, _level in doc.iterate_items():
-            if isinstance(element, PictureItem):
-                try:
-                    # get_image() returns a PIL.Image or None
-                    pil_image = element.get_image(doc)
-                    if pil_image is None:
-                        continue
-
-                    # caption_text() returns the figure caption if one exists,
-                    # giving the vision model useful context about what to look for
-                    context = (
-                        element.caption_text(doc)
-                        if hasattr(element, "caption_text")
-                        else ""
-                    )
-
-                    log.info("Image %d: sending to vision model...", image_count + 1)
-                    description = describe_image(pil_image, context=context)
-
-                    # Wrap the description as a chunk with clear labelling
-                    image_text = f"[VISUAL CONTENT — {file_path.name}]\n{description}"
-
-                    chunks.append({
-                        "text": image_text,
-                        "metadata": {
-                            "source":      file_path.name,
-                            "source_path": str(file_path),
-                            "chunk_index": f"img_{image_count}",
-                            "chunk_type":  "image_description",
-                        }
-                    })
-                    image_count += 1
-
-                except Exception as e:
-                    log.warning("Could not process image element: %s", e)
-
-        if image_count:
-            log.info("Images: %d described by vision model", image_count)
-
-    except Exception as e:
-        log.error("Failed to process %s: %s", file_path.name, e)
-
-    return chunks
-
-
-# =============================================================================
-# STEP 5: Main ingestion loop — process everything in the ingest/ folder
-# =============================================================================
-
-def run_ingestion():
-    """
-    Scans the ingest/ folder for all supported documents,
-    processes each one, and loads the results into ChromaDB.
-
-    After each file is successfully processed, it is moved to ingest/processed/
-    so it will not be accidentally re-ingested on the next run.
-    """
-    ingest_path = Path(config.INGEST_DIR)
-
-    # Create the processed/ subfolder if it does not exist yet.
-    # Files are moved here after ingestion — a simple, visible audit trail.
-    processed_dir = ingest_path / "processed"
-    processed_dir.mkdir(exist_ok=True)
-
-    # Find all files with supported extensions in the ingest/ root only
-    # (not in processed/ — those are already done)
-    files_to_process = [
-        f for f in ingest_path.iterdir()
-        if f.is_file() and f.suffix.lower() in config.SUPPORTED_EXTENSIONS
+    # Immediately add the user's message and an empty assistant placeholder
+    # to history, then yield so Gradio shows the user's message right away
+    # without waiting for the LLM to start responding.
+    history = history + [
+        {"role": "user",      "content": message},
+        {"role": "assistant", "content": ""},
     ]
+    yield "", history
 
-    if not files_to_process:
-        log.info("No supported files found in %s", config.INGEST_DIR)
-        log.info("Supported types: %s", ", ".join(config.SUPPORTED_EXTENSIONS))
-        log.info("Drop documents into the ingest/ folder and re-run.")
-        return
+    # Stream tokens from the RAG pipeline.
+    # Each iteration of query_stream() yields a dict with the answer-so-far,
+    # sources, and chunks. We update the last history entry (the assistant
+    # placeholder) with the growing partial answer.
+    #
+    # v1.5 — Pass conversation history into query_stream() for follow-up
+    # question handling (pronoun resolution, "what else does it say about
+    # that?", etc.). We slice off the last 2 entries because we just appended
+    # the current user message and an empty assistant placeholder above —
+    # those aren't answered yet and would confuse the model.
+    #
+    # Privacy: this history exists only inside the user's browser tab.
+    # The server never remembers it between sessions — closing the tab
+    # discards the conversation. Open a second tab and you start fresh.
+    prior_history = history[:-2]
+    final_sources = []
+    for partial in query_stream(message, history=prior_history):
+        history[-1]["content"] = partial["answer"]
+        final_sources = partial["sources"]
+        yield "", history
 
-    log.info("Found %d document(s) to process.", len(files_to_process))
+    # After streaming is complete, append the source citations to the final answer.
+    # This is done as a single update at the end so the citation block doesn't
+    # flicker into view character-by-character during streaming.
+    if final_sources:
+        source_list = "\n".join(f"  • {s}" for s in final_sources)
+        history[-1]["content"] += f"\n\n---\n**Sources used:**\n{source_list}"
+        yield "", history
 
-    all_texts    = []
-    all_metadata = []
 
-    # Process each file
-    for file_path in tqdm(files_to_process, desc="Processing documents", unit="file"):
-        chunks = process_document(file_path)
-        for chunk in chunks:
-            all_texts.append(chunk["text"])
-            all_metadata.append(chunk["metadata"])
+# =============================================================================
+# Build the Gradio interface
+# =============================================================================
 
-        # Move the file to processed/ after successful extraction.
-        # If extraction produced zero chunks (e.g. empty file), we still move it
-        # to avoid an infinite retry loop on a broken file.
-        try:
-            file_path.rename(processed_dir / file_path.name)
-            log.info("Moved %s → ingest/processed/", file_path.name)
-        except Exception as e:
-            log.warning("Could not move %s to processed/: %s", file_path.name, e)
+def build_ui():
+    """Constructs and returns the Gradio Blocks interface."""
 
-        print()  # blank line between documents for readability
+    # Check if the knowledge base has any documents loaded
+    kb_count = check_knowledge_base()
+    if kb_count == 0:
+        status_msg = (
+            "⚠️ Knowledge base is empty. "
+            "Drop documents into the ingest/ folder and run: python src/ingest.py"
+        )
+    else:
+        status_msg = f"✅ Knowledge base ready — {kb_count:,} chunks loaded from your documents."
 
-    if not all_texts:
-        log.warning("No text was extracted from any documents. Check file contents.")
-        return
+    with gr.Blocks(
+        title="Enterprise RAG Chatbot",
+        theme=gr.themes.Soft()
+    ) as demo:
 
-    log.info("Total chunks ready to embed: %d", len(all_texts))
-    log.info("Sending to ChromaDB via %s ...", config.EMBED_MODEL)
-    log.info("(This may take a few minutes for large document sets)")
+        gr.Markdown("# 🤖 Enterprise Knowledge Base Chatbot")
+        gr.Markdown(
+            "Ask questions about your uploaded documents. "
+            "Answers are grounded in your knowledge base only — "
+            "the system will tell you if it doesn't have the information."
+        )
+        gr.Markdown(f"**Status:** {status_msg}")
 
-    # --- Generate deterministic chunk IDs ---
-    # Same source file + same chunk position + same text = same ID.
-    # ChromaDB will OVERWRITE existing chunks with the same ID instead of
-    # creating duplicates. This makes re-ingestion a safe, idempotent operation.
-    chunk_ids = [make_chunk_id(m, t) for m, t in zip(all_metadata, all_texts)]
-
-    # Add all chunks to ChromaDB in one call.
-    # ChromaDB will call the embedding function (nomic-embed-text) on each chunk
-    # and store both the text and its vector representation.
-    # The ids= parameter enables upsert behaviour — existing IDs are overwritten.
-    vector_store.add_texts(
-        texts=all_texts,
-        metadatas=all_metadata,
-        ids=chunk_ids,
-    )
-
-    # --- Post-ingestion assertion: make image extraction visible ---
-    # A count of zero means the vision pipeline ran as a silent no-op.
-    # This surfaces the problem immediately rather than only discovering it
-    # when the chatbot fails to answer chart-related questions.
-    image_chunks = sum(
-        1 for m in all_metadata
-        if m.get("chunk_type") == "image_description"
-    )
-    log.info("Image-description chunks created: %d", image_chunks)
-    if image_chunks == 0:
-        log.warning(
-            "No image descriptions were generated. "
-            "If your documents contain charts or diagrams, verify that "
-            "pdf_pipeline_options.generate_picture_images = True and that "
-            "the vision model (%s) is reachable at %s.",
-            config.VISION_MODEL, config.OLLAMA_BASE_URL
+        # The main chat window.
+        # type="messages" is required in Gradio 5+ (U-08).
+        # The old default ("tuples") used [user_text, assistant_text] pairs —
+        # deprecated in Gradio 5 and will be removed in a future release.
+        # "messages" format uses {"role": "user"|"assistant", "content": "..."} dicts,
+        # which matches OpenAI's chat format and is the Gradio 5 standard.
+        chatbot = gr.Chatbot(
+            label="Conversation",
+            height=500,
+            show_copy_button=True,
+            type="messages",     # Required in Gradio 5+ — removes deprecation warning
         )
 
-    log.info("SUCCESS: %d chunks stored in ChromaDB.", len(all_texts))
-    log.info("Collection '%s' in %s", config.CHROMA_COLLECTION, config.CHROMA_DIR)
-    log.info("Your knowledge base is ready. Run app.py to start the chatbot.")
+        # The message input row
+        with gr.Row():
+            msg_box = gr.Textbox(
+                placeholder="Ask a question about your documents...",
+                label="Your question",
+                scale=8,
+                lines=2
+            )
+            send_btn = gr.Button("Send", variant="primary", scale=1)
+
+        # Clear button to reset the conversation
+        clear_btn = gr.Button("Clear conversation", variant="secondary")
+
+        # Wire up the send action (clicking Send or pressing Enter)
+        send_btn.click(
+            fn=chat_handler,
+            inputs=[msg_box, chatbot],
+            outputs=[msg_box, chatbot]
+        )
+        msg_box.submit(
+            fn=chat_handler,
+            inputs=[msg_box, chatbot],
+            outputs=[msg_box, chatbot]
+        )
+
+        # Wire up the clear action
+        clear_btn.click(lambda: ([], ""), outputs=[chatbot, msg_box])
+
+        gr.Markdown(
+            "---\n"
+            f"**Models:** `{config.EMBED_MODEL}` (embeddings) · "
+            f"`{config.CHAT_MODEL}` (chat + vision)  \n"
+            f"**Vector store:** ChromaDB · Collection: `{config.CHROMA_COLLECTION}`"
+        )
+
+    return demo
 
 
-# Run ingestion when this script is executed directly
+# =============================================================================
+# Entry point
+# =============================================================================
+
 if __name__ == "__main__":
-    run_ingestion()
+    log.info("Starting Enterprise RAG Chatbot UI...")
+    log.info("Chat/vision model: %s", config.CHAT_MODEL)
+    log.info("Embed model      : %s", config.EMBED_MODEL)
+    log.info("ChromaDB    : %s", config.CHROMA_DIR)
+    log.info("Open your browser at: http://localhost:%d", config.GRADIO_PORT)
+
+    demo = build_ui()
+    demo.launch(
+        server_name=config.GRADIO_HOST,
+        server_port=config.GRADIO_PORT,
+        share=False    # share=True would create a public Gradio link — keep False for enterprise
+    )
 PYEOF
 ```
 > **What it does:** Creates the full ingestion pipeline script in `src/ingest.py`.  
