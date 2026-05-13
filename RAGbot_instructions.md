@@ -1512,15 +1512,12 @@ if __name__ == "__main__":
 PYEOF
 ```
 > **What it does:** Creates the full ingestion pipeline script in `src/ingest.py`.  
-> **Key changes from v1.0/v1.2:**
-> - **Docling pipeline options** — `generate_picture_images=True` is now explicitly set. Previously this was silently off, meaning all chart/diagram images were skipped with no error.
-> - **Correct Docling traversal** — uses `doc.iterate_items()` with `isinstance(element, PictureItem)` which matches Docling's actual API.
 > - **Deterministic chunk IDs** — `make_chunk_id()` generates a hash-based ID per chunk. Re-running ingest on an already-ingested document now overwrites existing chunks instead of duplicating them.
 > - **Move-to-processed** — after each file is ingested, it is moved to `ingest/processed/`. This prevents accidental double-ingestion and provides a visible audit trail.
-> - **`keep_alive`** — passed to the direct `ollama_client` (vision calls) and `ChatOllama` (Phase 9) so models stay resident. Note: `OllamaEmbeddings` does NOT accept `keep_alive` — its Pydantic schema forbids extra fields. The parameter is omitted from `OllamaEmbeddings` in the final script (see Known Fixes below).
+> - **`keep_alive`** — passed to the direct `ollama_client` (vision calls) and `ChatOllama` (Phase 9) so models stay resident. Note: `OllamaEmbeddings` does NOT accept `keep_alive` — its Pydantic schema forbids extra fields. 
 > - **Logging** — all `print()` replaced with `log.info/warning/error()`. Output goes to both terminal and `logs/chatbot.log`.
 > - **Post-ingest image assertion** — prints a warning if zero image-description chunks were created, making the "vision pipeline is broken" case visible immediately.
-> - **New in v1.3 — Two-stage chunking (U-16 + U-17):** Documents are first split on markdown section headings (`MarkdownHeaderTextSplitter`), then each section is cut into 1800-character chunks (`RecursiveCharacterTextSplitter`). The heading path (h1/h2/h3) travels as metadata on every chunk, so a query like "torque spec for input shaft" can match the right section even if the heading itself isn't in the chunk body. Chunk size raised from 1000 → 1800 to keep multi-step procedures and spec tables intact.
+> - **Two-stage chunking:** Documents are first split on markdown section headings (`MarkdownHeaderTextSplitter`), then each section is cut into 1800-character chunks (`RecursiveCharacterTextSplitter`). The heading path (h1/h2/h3) travels as metadata on every chunk, so a query like "torque spec for input shaft" can match the right section even if the heading itself isn't in the chunk body. Chunk size raised from 1000 → 1800 to keep multi-step procedures and spec tables intact.
 >
 > **Why the heredoc above looks the way it does — Known Issues already baked into the canonical source:**
 >
