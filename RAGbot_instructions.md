@@ -2426,7 +2426,7 @@ export OLLAMA_KEEP_ALIVE=24h
 
 Copy any PDF, DOCX, MD, or TXT file into:
 ```
-/Users/andrew-m4/Documents/Claude/Projects/Chatbot/ingest/
+/Users/*YOUR USERNAME*/RAGbot/ingest/
 ```
 > **Tip for testing:** Use a document you know the content of — so you can verify the chatbot's answers are actually grounded in the document and not guessed.
 
