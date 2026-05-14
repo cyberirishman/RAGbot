@@ -1680,7 +1680,8 @@ def run_ingestion():
 # Run ingestion when this script is executed directly
 if __name__ == "__main__":
     run_ingestion()
-PYEOF```
+PYEOF
+```
 > **What it does:** Creates the full ingestion pipeline script in `src/ingest.py`.  
 > - **Deterministic chunk IDs** — `make_chunk_id()` generates a hash-based ID per chunk. Re-running ingest on an already-ingested document now overwrites existing chunks instead of duplicating them.
 > - **Move-to-processed** — after each file is ingested, it is moved to `ingest/processed/`. This prevents accidental double-ingestion and provides a visible audit trail.
